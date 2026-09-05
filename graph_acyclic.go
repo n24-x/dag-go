@@ -1,84 +1,69 @@
 package dag
 
-// IsAcyclic uses depth-first search to find cycles
-// in a generic graph represented by Graph interface.
-// If a cycle is found, it returns a list of nodes that
-// are in the cyclic path, identified by their orders.
-func IsAcyclic(g Graph) (bool, []int) {
-	// cycleStart is a node that introduces a cycle in
-	// the graph. Values in the range [1, g.Order()) mean
-	// that there exists a cycle in g.
-	info := newCycleInfo(g.Order())
+// DFS node colors used by the three-color cycle detection below.
+const (
+	white = iota // node has not been visited
+	gray         // node is on the current DFS recursion stack
+	black        // node fully processed; no cycle through it
+)
 
-	for i := 0; i < g.Order(); i++ {
-		info.reset()
+// IsAcyclic uses DFS with three-color marking to detect cycles in a graph
+// represented by the Graph interface. Node IDs start at 1; 0 is the sentinel
+// "not found" and is never a real node.
+//
+// If the graph is acyclic it returns (true, nil). Otherwise it returns
+// (false, cycle), where cycle is the path of NodeIDs forming the cycle,
+// e.g. [1 2 3 1] for 1 -> 2 -> 3 -> 1.
+func IsAcyclic(g Graph) (bool, []NodeID) {
+	// state is indexed by NodeID; index 0 (the sentinel) is unused.
+	state := make([]int, g.Count()+1)
 
-		cycle := isAcyclic(g, i, info, nil /* cycle path */)
-		if len(cycle) > 0 {
-			return false, cycle
+	for u := NodeID(1); u <= NodeID(g.Count()); u++ {
+		// Start a DFS from each unvisited node to cover disconnected graphs.
+		if state[u] == white {
+			cycle := detectCycle(g, u, state, nil /* cycle path */)
+			if len(cycle) > 0 {
+				return false, cycle
+			}
 		}
 	}
 
 	return true, nil
 }
 
-// isAcyclic traverses the given graph starting from a specific node
-// using depth-first search using recursion. If a cycle is detected,
-// it returns the node that contains the "last" edge that introduces
-// a cycle.
-// For example, running isAcyclic starting from 1 on the following
-// graph will return 3.
-//
-//	1 -> 2 -> 3 -> 1
-func isAcyclic(g Graph, u int, info cycleInfo, path []int) []int {
-	// We've already verified that there are no cycles from this node.
-	if info[u].Visited {
-		return nil
-	}
-	info[u].Visited = true
-	info[u].OnStack = true
-
+// detectCycle performs a DFS starting from u and returns the first cycle
+// found, or nil if no cycle is reachable from u.
+func detectCycle(g Graph, u NodeID, state []int, path []NodeID) []NodeID {
+	// Mark the current node as being explored and add it to the current path.
+	state[u] = gray
 	path = append(path, u)
-	for _, v := range g.EdgesFrom(u) {
-		if !info[v].Visited {
-			if cycle := isAcyclic(g, v, info, path); len(cycle) > 0 {
+
+	for _, v := range g.OutNeighbors(u) {
+		switch state[v] {
+		case white:
+			// Continue the DFS from an unvisited neighbor.
+			if cycle := detectCycle(g, v, state, path); len(cycle) > 0 {
 				return cycle
 			}
-		} else if info[v].OnStack {
-			// We've found a cycle, and we have a full path back.
-			// Prune it down to just the cyclic nodes.
-			cycle := path
-			for i := len(cycle) - 1; i >= 0; i-- {
-				if cycle[i] == v {
-					cycle = cycle[i:]
-					break
+
+		case gray:
+			// v is still on the recursion stack: a back edge closes a cycle
+			// starting at v. Prune the path down to the cyclic nodes and
+			// close the cycle by appending v.
+			for i := len(path) - 1; i >= 0; i-- {
+				if path[i] == v {
+					cycleLen := len(path) - i
+					cycle := make([]NodeID, cycleLen+1)
+					copy(cycle, path[i:])
+					cycle[cycleLen] = v
+					return cycle
 				}
 			}
-
-			// Complete the cycle by adding this node to it.
-			return append(cycle, v)
 		}
+		// Black nodes have already been fully processed.
 	}
-	info[u].OnStack = false
+
+	// Mark the current node as fully processed.
+	state[u] = black
 	return nil
-}
-
-// cycleNode keeps track of a single node's info for cycle detection.
-type cycleNode struct {
-	Visited bool
-	OnStack bool
-}
-
-// cycleInfo contains information about each node while we're trying to find
-// cycles.
-type cycleInfo []cycleNode
-
-func newCycleInfo(order int) cycleInfo {
-	return make(cycleInfo, order)
-}
-
-func (info cycleInfo) reset() {
-	for i := range info {
-		info[i].OnStack = false
-	}
 }
