@@ -1,5 +1,32 @@
 package dag
 
+// Graph represents a simple interface for representation
+// of a directed graph.
+//
+// It is assumed that each node in the graph is uniquely
+// identified with an incremental positive integer (i.e. 1, 2, 3...).
+// A value of 0 for a node represents a sentinel error value.
+//
+// ResourceKey is the user's resource key: it can be any comparable type
+// (string, a struct, a pointer, ...).
+type Graph[ResourceKey comparable] interface {
+	// return the total number of nodes in the graph.
+	Count() int
+
+	// return the node registered under the given ID, or nil if the ID is
+	// out of range.
+	At(id NodeID) Node[ResourceKey]
+
+	// return a list of integers where each
+	// represents a node that has an edge from node u.
+	OutNeighbors(u NodeID) []NodeID
+
+	// return the node IDs that provide the given k.
+	// Several nodes may provide the same resource; all are returned, in
+	// registration order. A nil result means nobody provides k yet.
+	Provide(k ResourceKey) []NodeID
+}
+
 // NodeID uniquely identifies a node (one registered unit) inside a graph.
 //
 // NodeIDs are assigned by the graph at Add time, in registration order,
@@ -8,48 +35,13 @@ package dag
 // The value 0 is reserved as the sentinel for "not found".
 type NodeID int
 
-// ResourceID uniquely identifies a resource: something that can be produced by
-// nodes and required by other nodes.
-type ResourceID int
-
 // Node is the minimal registrable unit. It describes what the
 // node needs (Requires) and what it provides (Provides).
-type Node interface {
-	// Requires returns the resources this node needs in order to run
-	// (dig: constructor parameters / dig.In fields).
-	Requires() []ResourceID
-	// Provides returns the resources this node makes available after it runs
-	// (dig: constructor results / dig.Out fields).
-	Provides() []ResourceID
-}
-
-// Graph is the query contract visible to algorithms (IsAcyclic, Resolve,
-// ResolveNode, ...). It deliberately exposes no notion of edges: edges are
-// derived — the providers of a node's Requires — rather than stored.
-//
-// The contract is intentionally split from Node so that algorithms run on
-// NodeIDs and never touch Node implementations. This mirrors dig's layering:
-// internal/graph algorithms know only int node indices, and the dig-side
-// graphHolder translates between the container's key space and node indices.
-type Graph interface {
-	// Count returns the total number of nodes in the graph.
-	Count() int
-
-	// At returns the node registered under the given ID, or nil if the ID is
-	// out of range. It lets algorithms read a node's Requires back when they
-	// need to report precisely which resources are missing (see Resolve).
-	At(id NodeID) Node
-
-	// OutNeighbors returns the node IDs that node u depends on — the
-	// providers of every resource u requires, computed on the fly.
-	//
-	// The empty result means u has no dependencies (leaf) or that some of its
-	// Requires have no provider yet; missing resources are reported precisely
-	// by Resolve, which collects them into a MissingResourcesError.
-	OutNeighbors(u NodeID) []NodeID
-
-	// Provide returns the node IDs that provide the given resource.
-	// Several nodes may provide the same resource; all are returned, in
-	// registration order. A nil result means nobody provides r yet.
-	Provide(r ResourceID) []NodeID
+type Node[ResourceKey comparable] interface {
+	// return the resources this node depends on, i.e. the resources
+	// other nodes must provide for this node to be usable
+	Requires() []ResourceKey
+	// return the resources this node produces, i.e. the resources
+	// other nodes can depend on
+	Provides() []ResourceKey
 }

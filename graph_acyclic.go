@@ -1,5 +1,7 @@
 package dag
 
+import "slices"
+
 // DFS node colors used by the three-color cycle detection below.
 const (
 	white = iota // node has not been visited
@@ -12,9 +14,15 @@ const (
 // "not found" and is never a real node.
 //
 // If the graph is acyclic it returns (true, nil). Otherwise it returns
-// (false, cycle), where cycle is the path of NodeIDs forming the cycle,
-// e.g. [1 2 3 1] for 1 -> 2 -> 3 -> 1.
-func IsAcyclic(g Graph) (bool, []NodeID) {
+// (false, cycle), where cycle.Cycle is the path of NodeIDs forming the cycle
+// (e.g. [1 2 3 1] for 1 -> 2 -> 3 -> 1) and cycle.Nodes snapshots the node
+// under each path element at detection time (cycle.Nodes[i] = g.At(cycle.Cycle[i])).
+//
+// The Nodes snapshot is taken while the graph still holds every node. In the
+// Add path the caller rolls the graph back *after* this returns, so the node
+// that closed the cycle is still present in the snapshot even though it is
+// gone from the graph afterwards.
+func IsAcyclic[ResourceKey comparable](g Graph[ResourceKey]) (bool, *CycleError[ResourceKey]) {
 	// state is indexed by NodeID; index 0 (the sentinel) is unused.
 	state := make([]int, g.Count()+1)
 
@@ -23,7 +31,13 @@ func IsAcyclic(g Graph) (bool, []NodeID) {
 		if state[u] == white {
 			cycle := detectCycle(g, u, state, nil /* cycle path */)
 			if len(cycle) > 0 {
-				return false, cycle
+				// Snapshot the nodes on the cycle while they are all still
+				// in the graph.
+				nodes := make([]Node[ResourceKey], len(cycle))
+				for i, id := range cycle {
+					nodes[i] = g.At(id)
+				}
+				return false, &CycleError[ResourceKey]{Cycle: cycle, Nodes: nodes}
 			}
 		}
 	}
@@ -33,7 +47,7 @@ func IsAcyclic(g Graph) (bool, []NodeID) {
 
 // detectCycle performs a DFS starting from u and returns the first cycle
 // found, or nil if no cycle is reachable from u.
-func detectCycle(g Graph, u NodeID, state []int, path []NodeID) []NodeID {
+func detectCycle[ResourceKey comparable](g Graph[ResourceKey], u NodeID, state []int, path []NodeID) []NodeID {
 	// Mark the current node as being explored and add it to the current path.
 	state[u] = gray
 	path = append(path, u)
@@ -50,8 +64,8 @@ func detectCycle(g Graph, u NodeID, state []int, path []NodeID) []NodeID {
 			// v is still on the recursion stack: a back edge closes a cycle
 			// starting at v. Prune the path down to the cyclic nodes and
 			// close the cycle by appending v.
-			for i := len(path) - 1; i >= 0; i-- {
-				if path[i] == v {
+			for i, p := range slices.Backward(path) {
+				if p == v {
 					cycleLen := len(path) - i
 					cycle := make([]NodeID, cycleLen+1)
 					copy(cycle, path[i:])

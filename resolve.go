@@ -5,25 +5,25 @@ import (
 )
 
 // Resolve returns the order of nodes which needed to build the given target resource.
-func Resolve(g Graph, target ResourceID) ([]NodeID, error) {
+func Resolve[ResourceKey comparable](g Graph[ResourceKey], target ResourceKey) ([]NodeID, error) {
 	roots := g.Provide(target)
 	if len(roots) == 0 {
-		return nil, &MissingResourcesError{Resources: []ResourceID{target}}
+		return nil, &MissingResourcesError[ResourceKey]{Resources: []ResourceKey{target}}
 	}
 	return resolveFromRoots(g, roots)
 }
 
-// Resolve returns the order of nodes which needed to reach the given node.
-func ResolveNode(g Graph, target NodeID) ([]NodeID, error) {
+// ResolveNode returns the order of nodes which needed to reach the given node.
+func ResolveNode[ResourceKey comparable](g Graph[ResourceKey], target NodeID) ([]NodeID, error) {
 	return resolveFromRoots(g, []NodeID{target})
 }
 
 // resolveFromRoots returns the order of nodes needed to reach the given
 // roots: a depth-first post-order walk in which each node is emitted once,
 // after all of its dependencies.
-func resolveFromRoots(g Graph, roots []NodeID) ([]NodeID, error) {
+func resolveFromRoots[ResourceKey comparable](g Graph[ResourceKey], roots []NodeID) ([]NodeID, error) {
 	if ok, cycle := IsAcyclic(g); !ok {
-		return nil, &CycleError{Cycle: cycle}
+		return nil, cycle
 	}
 
 	const (
@@ -35,8 +35,8 @@ func resolveFromRoots(g Graph, roots []NodeID) ([]NodeID, error) {
 
 	var (
 		order   []NodeID
-		missing []ResourceID
-		seen    = make(map[ResourceID]struct{})
+		missing []ResourceKey
+		seen    = make(map[ResourceKey]struct{})
 	)
 
 	var visit func(u NodeID) error
@@ -51,18 +51,18 @@ func resolveFromRoots(g Graph, roots []NodeID) ([]NodeID, error) {
 			// The entry check above already rejects cycles, so reaching a
 			// visiting node means the graph changed mid-traversal or a custom
 			// Graph implementation is inconsistent. Guard without a path.
-			return &CycleError{}
+			return &CycleError[ResourceKey]{}
 		}
 
 		state[u] = visiting
 
-		// Collect precisely which of u's Requires have no provider yet.
+		// Record which resources are unavailable.
 		if node := g.At(u); node != nil {
-			for _, r := range node.Requires() {
-				if len(g.Provide(r)) == 0 {
-					if _, ok := seen[r]; !ok {
-						seen[r] = struct{}{}
-						missing = append(missing, r)
+			for _, k := range node.Requires() {
+				if len(g.Provide(k)) == 0 {
+					if _, ok := seen[k]; !ok {
+						seen[k] = struct{}{}
+						missing = append(missing, k)
 					}
 				}
 			}
@@ -84,7 +84,7 @@ func resolveFromRoots(g Graph, roots []NodeID) ([]NodeID, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &MissingResourcesError{Resources: missing}
+		return nil, &MissingResourcesError[ResourceKey]{Resources: missing}
 	}
 	return order, nil
 }
