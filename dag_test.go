@@ -27,16 +27,19 @@ func resIDs(rs ...Res) []Res    { return rs }
 
 type loadConfig struct{ path string }
 
+func (loadConfig) String() string  { return "loadConfig" }
 func (loadConfig) Requires() []Res { return nil }
 func (loadConfig) Provides() []Res { return resIDs(RConfig) }
 
 type connectDB struct{ dsn string }
 
+func (connectDB) String() string  { return "connectDB" }
 func (connectDB) Requires() []Res { return resIDs(RConfig) }
 func (connectDB) Provides() []Res { return resIDs(RDB) }
 
 type startServer struct{ port int }
 
+func (startServer) String() string  { return "startServer" }
 func (startServer) Requires() []Res { return resIDs(RDB) }
 func (startServer) Provides() []Res { return resIDs(RServer) }
 
@@ -46,6 +49,7 @@ type needProvide struct {
 	provs []Res
 }
 
+func (needProvide) String() string    { return "needProvide" }
 func (n needProvide) Requires() []Res { return n.needs }
 func (n needProvide) Provides() []Res { return n.provs }
 
@@ -219,9 +223,9 @@ func TestResolveMissing(t *testing.T) {
 	mustAdd(t, g, startServer{})
 
 	_, err := Resolve(g, RServer)
-	var missing *MissingResourcesError[Res]
+	var missing *MissingProviderError[Res]
 	if !errors.As(err, &missing) {
-		t.Fatalf("expected *MissingResourcesError, got %T: %v", err, err)
+		t.Fatalf("expected *MissingProviderError, got %T: %v", err, err)
 	}
 	if !slices.Equal(missing.Resources, resIDs(RDB)) {
 		t.Fatalf("missing = %v, want [RDB]", missing.Resources)
@@ -230,7 +234,7 @@ func TestResolveMissing(t *testing.T) {
 	// Resolving a resource nobody provides reports just that resource.
 	_, err = Resolve(g, RConfig)
 	if !errors.As(err, &missing) {
-		t.Fatalf("expected *MissingResourcesError, got %T: %v", err, err)
+		t.Fatalf("expected *MissingProviderError, got %T: %v", err, err)
 	}
 	if !slices.Equal(missing.Resources, resIDs(RConfig)) {
 		t.Fatalf("missing = %v, want [RConfig]", missing.Resources)

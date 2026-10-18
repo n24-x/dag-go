@@ -4,23 +4,28 @@ import (
 	"fmt"
 )
 
-// Resolve returns the order of nodes which needed to build the given target resource.
+// Resolve returns all build paths for target at once: building the nodes in
+// this order, one after another, guarantees that target gets a provider.
+//
+// It returns *MissingProviderError if a needed resource has no provider, and
+// *CycleError if the graph contains a cycle.
 func Resolve[ResourceType comparable](g Graph[ResourceType], target ResourceType) ([]NodeID, error) {
 	roots := g.Provide(target)
 	if len(roots) == 0 {
-		return nil, &MissingResourcesError[ResourceType]{Resources: []ResourceType{target}}
+		return nil, &MissingProviderError[ResourceType]{Resources: []ResourceType{target}}
 	}
 	return resolveFromRoots(g, roots)
 }
 
-// ResolveNode returns the order of nodes which needed to reach the given node.
+// ResolveNode is like Resolve but takes a node ID instead of a resource, and
+// returns build path for that node.
 func ResolveNode[ResourceType comparable](g Graph[ResourceType], target NodeID) ([]NodeID, error) {
 	return resolveFromRoots(g, []NodeID{target})
 }
 
-// resolveFromRoots returns the order of nodes needed to reach the given
-// roots: a depth-first post-order walk in which each node is emitted once,
-// after all of its dependencies.
+// resolveFromRoots returns the merge build path of the given roots: a
+// depth-first post-order walk in which each node is emitted once, after all of
+// its dependencies.
 func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []NodeID) ([]NodeID, error) {
 	if ok, cycle := IsAcyclic(g); !ok {
 		return nil, cycle
@@ -48,10 +53,10 @@ func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []No
 		case done:
 			return nil
 		case visiting:
-			// The entry check above already rejects cycles, so reaching a
-			// visiting node means the graph changed mid-traversal or a custom
-			// Graph implementation is inconsistent. Guard without a path.
-			return &CycleError[ResourceType]{}
+			if ok, cycle := IsAcyclic(g); !ok {
+				return fmt.Errorf("dag: graph became cyclic during resolve: %w", cycle)
+			}
+			return fmt.Errorf("dag: graph changes during resolve introduced a cycle")
 		}
 
 		state[u] = visiting
@@ -84,7 +89,7 @@ func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []No
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &MissingResourcesError[ResourceType]{Resources: missing}
+		return nil, &MissingProviderError[ResourceType]{Resources: missing}
 	}
 	return order, nil
 }

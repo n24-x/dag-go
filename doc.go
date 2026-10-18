@@ -9,4 +9,8 @@
 // user's world. Providers and consumers match on exact equality of
 // ResourceType, so there is no
 // separate resource-ID space to translate into and no collision handling.
+//
+// ResourceType should implement [fmt.Stringer], because Error methods report
+// resources in error messages. The type parameter is only constrained to
+// comparable, so a type without String renders through its default %v form.
 package dag

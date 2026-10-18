@@ -1,5 +1,7 @@
 package dag
 
+import "fmt"
+
 // Graph represents a simple interface for representation
 // of a directed graph.
 //
@@ -38,6 +40,8 @@ type NodeID int
 // Node is the minimal registrable unit. It describes what the
 // node needs (Requires) and what it provides (Provides).
 type Node[ResourceType comparable] interface {
+	fmt.Stringer
+
 	// return the resources this node depends on, i.e. the resources
 	// other nodes must provide for this node to be usable
 	Requires() []ResourceType
