@@ -10,7 +10,7 @@ import (
 //
 // CycleError is built by IsAcyclic and reused by Add / Resolve / ResolveNode,
 // so Cycle and Nodes always stay parallel.
-type CycleError[ResourceKey comparable] struct {
+type CycleError[ResourceType comparable] struct {
 	// Cycle is the path of NodeIDs forming the cycle, e.g. [2 3 2].
 	Cycle []NodeID
 
@@ -20,10 +20,10 @@ type CycleError[ResourceKey comparable] struct {
 	// The snapshot matters for Add: the node that closed the cycle is rolled
 	// back out of the graph right after detection, so it is no longer
 	// reachable through At once Add returns. Nodes keeps it available.
-	Nodes []Node[ResourceKey]
+	Nodes []Node[ResourceType]
 }
 
-func (e *CycleError[ResourceKey]) Error() string {
+func (e *CycleError[ResourceType]) Error() string {
 	return fmt.Sprintf("dag: cycle detected in dependency graph: %v", e.Cycle)
 }
 
@@ -31,13 +31,13 @@ func (e *CycleError[ResourceKey]) Error() string {
 // a target but have no provider registered in the graph. It is the generic
 // counterpart of dig's errMissingDependencies, which dig raises at Invoke time
 // rather than at Provide time — here it surfaces at Resolve time.
-type MissingResourcesError[ResourceKey comparable] struct {
+type MissingResourcesError[ResourceType comparable] struct {
 	// Resources lists the resources that nothing provides, in the order they
 	// were first encountered during the traversal.
-	Resources []ResourceKey
+	Resources []ResourceType
 }
 
-func (e *MissingResourcesError[ResourceKey]) Error() string {
+func (e *MissingResourcesError[ResourceType]) Error() string {
 	parts := make([]string, len(e.Resources))
 	for i, r := range e.Resources {
 		parts[i] = fmt.Sprintf("%v", r)

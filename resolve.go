@@ -5,23 +5,23 @@ import (
 )
 
 // Resolve returns the order of nodes which needed to build the given target resource.
-func Resolve[ResourceKey comparable](g Graph[ResourceKey], target ResourceKey) ([]NodeID, error) {
+func Resolve[ResourceType comparable](g Graph[ResourceType], target ResourceType) ([]NodeID, error) {
 	roots := g.Provide(target)
 	if len(roots) == 0 {
-		return nil, &MissingResourcesError[ResourceKey]{Resources: []ResourceKey{target}}
+		return nil, &MissingResourcesError[ResourceType]{Resources: []ResourceType{target}}
 	}
 	return resolveFromRoots(g, roots)
 }
 
 // ResolveNode returns the order of nodes which needed to reach the given node.
-func ResolveNode[ResourceKey comparable](g Graph[ResourceKey], target NodeID) ([]NodeID, error) {
+func ResolveNode[ResourceType comparable](g Graph[ResourceType], target NodeID) ([]NodeID, error) {
 	return resolveFromRoots(g, []NodeID{target})
 }
 
 // resolveFromRoots returns the order of nodes needed to reach the given
 // roots: a depth-first post-order walk in which each node is emitted once,
 // after all of its dependencies.
-func resolveFromRoots[ResourceKey comparable](g Graph[ResourceKey], roots []NodeID) ([]NodeID, error) {
+func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []NodeID) ([]NodeID, error) {
 	if ok, cycle := IsAcyclic(g); !ok {
 		return nil, cycle
 	}
@@ -35,8 +35,8 @@ func resolveFromRoots[ResourceKey comparable](g Graph[ResourceKey], roots []Node
 
 	var (
 		order   []NodeID
-		missing []ResourceKey
-		seen    = make(map[ResourceKey]struct{})
+		missing []ResourceType
+		seen    = make(map[ResourceType]struct{})
 	)
 
 	var visit func(u NodeID) error
@@ -51,18 +51,18 @@ func resolveFromRoots[ResourceKey comparable](g Graph[ResourceKey], roots []Node
 			// The entry check above already rejects cycles, so reaching a
 			// visiting node means the graph changed mid-traversal or a custom
 			// Graph implementation is inconsistent. Guard without a path.
-			return &CycleError[ResourceKey]{}
+			return &CycleError[ResourceType]{}
 		}
 
 		state[u] = visiting
 
 		// Record which resources are unavailable.
 		if node := g.At(u); node != nil {
-			for _, k := range node.Requires() {
-				if len(g.Provide(k)) == 0 {
-					if _, ok := seen[k]; !ok {
-						seen[k] = struct{}{}
-						missing = append(missing, k)
+			for _, typ := range node.Requires() {
+				if len(g.Provide(typ)) == 0 {
+					if _, ok := seen[typ]; !ok {
+						seen[typ] = struct{}{}
+						missing = append(missing, typ)
 					}
 				}
 			}
@@ -84,7 +84,7 @@ func resolveFromRoots[ResourceKey comparable](g Graph[ResourceKey], roots []Node
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &MissingResourcesError[ResourceKey]{Resources: missing}
+		return nil, &MissingResourcesError[ResourceType]{Resources: missing}
 	}
 	return order, nil
 }

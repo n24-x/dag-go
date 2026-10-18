@@ -3,14 +3,14 @@ package dag
 import "fmt"
 
 // DefaultGraph is the default Graph implementation.
-type DefaultGraph[ResourceKey comparable] struct {
+type DefaultGraph[ResourceType comparable] struct {
 	// nodes holds registered nodes; the slice index is NodeID-1 because
 	// NodeIDs start at 1 (0 is the sentinel).
-	nodes []Node[ResourceKey]
+	nodes []Node[ResourceType]
 
 	// providers maps a resource to the node IDs that provide it, in
 	// registration order. A resource may be provided by several nodes.
-	providers map[ResourceKey][]NodeID
+	providers map[ResourceType][]NodeID
 
 	// nextID is the NodeID to hand out on the next Add.
 	// It MUST be initialized to 1: NodeIDs are 1-based, and 0 is reserved as
@@ -23,8 +23,8 @@ type DefaultGraph[ResourceKey comparable] struct {
 //
 // The type parameter must be supplied explicitly since there are no arguments
 // to infer it from: New[MyKey]().
-func New[ResourceKey comparable]() *DefaultGraph[ResourceKey] {
-	return &DefaultGraph[ResourceKey]{providers: make(map[ResourceKey][]NodeID), nextID: 1}
+func New[ResourceType comparable]() *DefaultGraph[ResourceType] {
+	return &DefaultGraph[ResourceType]{providers: make(map[ResourceType][]NodeID), nextID: 1}
 }
 
 // Add registers a node transactionally:
@@ -42,7 +42,7 @@ func New[ResourceKey comparable]() *DefaultGraph[ResourceKey] {
 //
 // On success it returns the new node's ID and the total node count after the
 // add. On failure it returns (0, count after rollback, err).
-func (g *DefaultGraph[ResourceKey]) Add(n Node[ResourceKey]) (NodeID, int, error) {
+func (g *DefaultGraph[ResourceType]) Add(n Node[ResourceType]) (NodeID, int, error) {
 	return g.add(n, false)
 }
 
@@ -51,26 +51,26 @@ func (g *DefaultGraph[ResourceKey]) Add(n Node[ResourceKey]) (NodeID, int, error
 // only when you know the registration cannot close a cycle — Resolve checks
 // for cycles before traversing, so an AddUnchecked graph is still caught
 // there.
-func (g *DefaultGraph[ResourceKey]) AddUnchecked(n Node[ResourceKey]) (NodeID, int) {
+func (g *DefaultGraph[ResourceType]) AddUnchecked(n Node[ResourceType]) (NodeID, int) {
 	id, count, _ := g.add(n, true)
 	return id, count
 }
 
 // add implements both Add (check=true) and AddUnchecked (check=false).
-func (g *DefaultGraph[ResourceKey]) add(n Node[ResourceKey], unchecked bool) (NodeID, int, error) {
+func (g *DefaultGraph[ResourceType]) add(n Node[ResourceType], unchecked bool) (NodeID, int, error) {
 	id := g.nextID
 	g.nextID++
 	g.nodes = append(g.nodes, n)
 
 	// Cache previous index entries so we can restore them on rollback
 	type oldEntry struct {
-		k    ResourceKey
+		typ  ResourceType
 		prev []NodeID
 	}
 	var olds []oldEntry
-	for _, k := range n.Provides() {
-		olds = append(olds, oldEntry{k: k, prev: g.providers[k]})
-		g.providers[k] = append(g.providers[k], id)
+	for _, typ := range n.Provides() {
+		olds = append(olds, oldEntry{typ: typ, prev: g.providers[typ]})
+		g.providers[typ] = append(g.providers[typ], id)
 	}
 
 	if unchecked {
@@ -81,7 +81,7 @@ func (g *DefaultGraph[ResourceKey]) add(n Node[ResourceKey], unchecked bool) (No
 		// Rollback: drop the node and restore the index
 		g.nodes = g.nodes[:len(g.nodes)-1]
 		for _, o := range olds {
-			g.providers[o.k] = o.prev
+			g.providers[o.typ] = o.prev
 		}
 		g.nextID--
 		return 0, len(g.nodes), cycle
@@ -91,39 +91,39 @@ func (g *DefaultGraph[ResourceKey]) add(n Node[ResourceKey], unchecked bool) (No
 }
 
 // Count returns the total number of nodes in the graph.
-func (g *DefaultGraph[ResourceKey]) Count() int { return len(g.nodes) }
+func (g *DefaultGraph[ResourceType]) Count() int { return len(g.nodes) }
 
 // OutNeighbors returns the node IDs that node u depends on.
-func (g *DefaultGraph[ResourceKey]) OutNeighbors(u NodeID) []NodeID {
+func (g *DefaultGraph[ResourceType]) OutNeighbors(u NodeID) []NodeID {
 	if u <= 0 || int(u) > len(g.nodes) {
 		return nil
 	}
 	var deps []NodeID
-	for _, k := range g.nodes[u-1].Requires() {
-		deps = append(deps, g.providers[k]...)
+	for _, typ := range g.nodes[u-1].Requires() {
+		deps = append(deps, g.providers[typ]...)
 	}
 	return deps
 }
 
 // Provide returns the node IDs that provide the given resource, in
 // registration order.
-func (g *DefaultGraph[ResourceKey]) Provide(k ResourceKey) []NodeID {
-	return g.providers[k]
+func (g *DefaultGraph[ResourceType]) Provide(typ ResourceType) []NodeID {
+	return g.providers[typ]
 }
 
 // At returns the node registered under the given ID, or nil if the ID is out
 // of range.
-func (g *DefaultGraph[ResourceKey]) At(id NodeID) Node[ResourceKey] {
+func (g *DefaultGraph[ResourceType]) At(id NodeID) Node[ResourceType] {
 	if id <= 0 || int(id) > len(g.nodes) {
 		return nil
 	}
 	return g.nodes[id-1]
 }
 
-// compile-time check that DefaultGraph satisfies Graph for any comparable ResourceKey.
+// compile-time check that DefaultGraph satisfies Graph for any comparable ResourceType.
 var _ Graph[string] = (*DefaultGraph[string])(nil)
 
 // String renders a compact description of the graph for debugging.
-func (g *DefaultGraph[ResourceKey]) String() string {
+func (g *DefaultGraph[ResourceType]) String() string {
 	return fmt.Sprintf("dag.DefaultGraph{nodes=%d, resources=%d}", g.Count(), len(g.providers))
 }

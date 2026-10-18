@@ -22,7 +22,7 @@ const (
 // Add path the caller rolls the graph back *after* this returns, so the node
 // that closed the cycle is still present in the snapshot even though it is
 // gone from the graph afterwards.
-func IsAcyclic[ResourceKey comparable](g Graph[ResourceKey]) (bool, *CycleError[ResourceKey]) {
+func IsAcyclic[ResourceType comparable](g Graph[ResourceType]) (bool, *CycleError[ResourceType]) {
 	// state is indexed by NodeID; index 0 (the sentinel) is unused.
 	state := make([]int, g.Count()+1)
 
@@ -33,11 +33,11 @@ func IsAcyclic[ResourceKey comparable](g Graph[ResourceKey]) (bool, *CycleError[
 			if len(cycle) > 0 {
 				// Snapshot the nodes on the cycle while they are all still
 				// in the graph.
-				nodes := make([]Node[ResourceKey], len(cycle))
+				nodes := make([]Node[ResourceType], len(cycle))
 				for i, id := range cycle {
 					nodes[i] = g.At(id)
 				}
-				return false, &CycleError[ResourceKey]{Cycle: cycle, Nodes: nodes}
+				return false, &CycleError[ResourceType]{Cycle: cycle, Nodes: nodes}
 			}
 		}
 	}
@@ -47,7 +47,7 @@ func IsAcyclic[ResourceKey comparable](g Graph[ResourceKey]) (bool, *CycleError[
 
 // detectCycle performs a DFS starting from u and returns the first cycle
 // found, or nil if no cycle is reachable from u.
-func detectCycle[ResourceKey comparable](g Graph[ResourceKey], u NodeID, state []int, path []NodeID) []NodeID {
+func detectCycle[ResourceType comparable](g Graph[ResourceType], u NodeID, state []int, path []NodeID) []NodeID {
 	// Mark the current node as being explored and add it to the current path.
 	state[u] = gray
 	path = append(path, u)

@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// Res is the user-chosen resource key used throughout these tests. It can be
-// any comparable type: dig maps its key{type, name, group} onto such a type.
+// Res is the user-chosen resource type used throughout these tests. It can be
+// any comparable type: dig maps its resourceType{type, name, group} onto such
+// a type.
 type Res string
 
 const (
