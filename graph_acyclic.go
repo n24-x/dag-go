@@ -2,11 +2,18 @@ package dag
 
 import "slices"
 
+// nodeColor is a node's mark in the three-color depth-first searches.
+//
+// It is a distinct type rather than a bare int so that storing anything else in
+// a state slice is a compile error, and so the three marks are the only values
+// that exist.
+type nodeColor uint8
+
 // DFS node colors used by the three-color cycle detection below.
 const (
-	white = iota // node has not been visited
-	gray         // node is on the current DFS recursion stack
-	black        // node fully processed; no cycle through it
+	white nodeColor = iota // node has not been visited
+	gray                   // node is on the current DFS recursion stack
+	black                  // node fully processed; no cycle through it
 )
 
 // IsAcyclic uses DFS with three-color marking to detect cycles in a graph
@@ -24,7 +31,7 @@ const (
 // gone from the graph afterwards.
 func IsAcyclic[ResourceType comparable](g Graph[ResourceType]) (bool, *CycleError[ResourceType]) {
 	// state is indexed by NodeID; index 0 (the sentinel) is unused.
-	state := make([]int, g.Count()+1)
+	state := make([]nodeColor, g.Count()+1)
 
 	for u := NodeID(1); u <= NodeID(g.Count()); u++ {
 		// Start a DFS from each unvisited node to cover disconnected graphs.
@@ -47,7 +54,7 @@ func IsAcyclic[ResourceType comparable](g Graph[ResourceType]) (bool, *CycleErro
 
 // detectCycle performs a DFS starting from u and returns the first cycle
 // found, or nil if no cycle is reachable from u.
-func detectCycle[ResourceType comparable](g Graph[ResourceType], u NodeID, state []int, path []NodeID) []NodeID {
+func detectCycle[ResourceType comparable](g Graph[ResourceType], u NodeID, state []nodeColor, path []NodeID) []NodeID {
 	// Mark the current node as being explored and add it to the current path.
 	state[u] = gray
 	path = append(path, u)

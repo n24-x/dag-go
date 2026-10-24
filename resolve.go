@@ -31,12 +31,7 @@ func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []No
 		return nil, cycle
 	}
 
-	const (
-		unvisited = iota
-		visiting  // on the current DFS stack
-		done
-	)
-	state := make([]uint8, g.Count()+1) // indexed by NodeID; 0 unused
+	state := make([]nodeColor, g.Count()+1) // indexed by NodeID; 0 unused
 
 	var (
 		order   []NodeID
@@ -50,16 +45,18 @@ func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []No
 			return fmt.Errorf("dag: node %d out of range (graph has %d nodes)", u, g.Count())
 		}
 		switch state[u] {
-		case done:
+		case black:
 			return nil
-		case visiting:
+		case gray: // still on the current path: a back edge
 			if ok, cycle := IsAcyclic(g); !ok {
 				return fmt.Errorf("dag: graph became cyclic during resolve: %w", cycle)
 			}
 			return fmt.Errorf("dag: graph changes during resolve introduced a cycle")
+		case white:
+			// Not visited yet: fall through to the walk below.
 		}
 
-		state[u] = visiting
+		state[u] = gray
 
 		// Record which resources are unavailable.
 		if node := g.At(u); node != nil {
@@ -79,7 +76,7 @@ func resolveFromRoots[ResourceType comparable](g Graph[ResourceType], roots []No
 			}
 		}
 		order = append(order, u)
-		state[u] = done
+		state[u] = black
 		return nil
 	}
 
