@@ -2,6 +2,8 @@ package dag
 
 import (
 	"errors"
+	"fmt"
+	"math/rand"
 	"reflect"
 	"slices"
 	"testing"
@@ -309,4 +311,221 @@ func TestIsAcyclicDirect(t *testing.T) {
 		}
 	}
 	t.Logf("cycle path: %v", ce.Cycle)
+}
+
+// ---- incremental Add ----
+
+// TestAddIncrementalMatchesFullCheck: the per-node cycle check in Add must
+// reach the same verdict as scanning the whole graph, on graphs the test
+// builds and rejects at random.
+//
+// Each trial is replayed into two graphs, one checked incrementally (Add) and
+// one checked with IsAcyclic after every successful registration. The second
+// graph is the reference: it can never drift from the truth.
+func TestAddIncrementalMatchesFullCheck(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	keys := []Res{RConfig, RDB, RServer, RCache, RAPI}
+
+	for trial := range 500 {
+		n := 1 + rng.Intn(12)
+		nodes := make([]needProvide, n)
+		for i := range nodes {
+			nodes[i].provs = resIDs(keys[rng.Intn(len(keys))])
+			for range rng.Intn(3) {
+				nodes[i].needs = append(nodes[i].needs, keys[rng.Intn(len(keys))])
+			}
+		}
+
+		incremental := New[Res]()
+		reference := New[Res]()
+		var accepted []needProvide
+
+		for i, node := range nodes {
+			// Reference verdict: register unchecked, then ask the whole-graph
+			// scan whether that was legal. Rebuild from the accepted nodes when
+			// it was not.
+			refID, refCount := reference.AddUnchecked(node)
+			if ok, _ := IsAcyclic(reference); !ok {
+				reference = New[Res]()
+				for _, prev := range accepted {
+					reference.AddUnchecked(prev)
+				}
+				if _, _, err := incremental.Add(node); err == nil {
+					t.Fatalf("trial %d node %d: Add accepted a node the full check rejects", trial, i)
+				}
+				if incremental.Count() != reference.Count() {
+					t.Fatalf("trial %d node %d: count after rollback = %d, want %d",
+						trial, i, incremental.Count(), reference.Count())
+				}
+				continue
+			}
+
+			id, count, err := incremental.Add(node)
+			if err != nil {
+				t.Fatalf("trial %d node %d: Add rejected a node the full check accepts: %v", trial, i, err)
+			}
+			if id != refID || count != refCount {
+				t.Fatalf("trial %d node %d: Add = (%d, %d), reference = (%d, %d)",
+					trial, i, id, count, refID, refCount)
+			}
+			if !slices.Equal(incremental.Provide(node.provs[0]), reference.Provide(node.provs[0])) {
+				t.Fatalf("trial %d node %d: provider index diverged", trial, i)
+			}
+			accepted = append(accepted, node)
+		}
+	}
+}
+
+// TestAddDetectsCycleThroughNewNode covers the cycle shapes the incremental
+// check has to find: back to the new node directly, and back through a longer
+// chain.
+func TestAddDetectsCycleThroughNewNode(t *testing.T) {
+	t.Run("direct", func(t *testing.T) {
+		g := New[Res]()
+		mustAdd(t, g, needProvide{provs: resIDs(RConfig)})                     // 1
+		mustAdd(t, g, needProvide{needs: resIDs(RConfig), provs: resIDs(RDB)}) // 2
+		if _, _, err := g.Add(needProvide{needs: resIDs(RDB), provs: resIDs(RConfig)}); err == nil {
+			t.Fatal("expected a cycle")
+		}
+	})
+
+	t.Run("longer chain", func(t *testing.T) {
+		g := New[Res]()
+		mustAdd(t, g, needProvide{provs: resIDs(RConfig)})                             // 1
+		mustAdd(t, g, needProvide{needs: resIDs(RConfig), provs: resIDs(RDB)})         // 2
+		mustAdd(t, g, needProvide{needs: resIDs(RDB), provs: resIDs(RServer)})         // 3
+		mustAdd(t, g, needProvide{needs: resIDs(RServer), provs: resIDs(RCache)})      // 4
+		_, _, err := g.Add(needProvide{needs: resIDs(RCache), provs: resIDs(RConfig)}) // closes 1..5..1
+		if err == nil {
+			t.Fatal("expected a cycle")
+		}
+		var ce *CycleError[Res]
+		if !errors.As(err, &ce) {
+			t.Fatalf("expected *CycleError, got %T", err)
+		}
+		if ce.Cycle[0] != ce.Cycle[len(ce.Cycle)-1] {
+			t.Fatalf("cycle %v must start and end at the same node", ce.Cycle)
+		}
+	})
+
+	t.Run("self", func(t *testing.T) {
+		g := New[Res]()
+		_, _, err := g.Add(needProvide{needs: resIDs(RConfig), provs: resIDs(RConfig)})
+		if err == nil {
+			t.Fatal("a node requiring what it provides is a cycle")
+		}
+		if g.Count() != 0 {
+			t.Fatalf("Count() = %d after rejection, want 0", g.Count())
+		}
+	})
+
+	t.Run("no in-edges is cheap and legal", func(t *testing.T) {
+		g := New[Res]()
+		// Requires things nobody provides: no dependents, no cycle.
+		for range 10 {
+			mustAdd(t, g, needProvide{needs: resIDs(RAPI), provs: resIDs(RConfig)})
+		}
+		// The provider index has ten entries; none of them consumes RConfig.
+		if got := len(g.Provide(RConfig)); got != 10 {
+			t.Fatalf("Provide(RConfig) has %d providers, want 10", got)
+		}
+	})
+}
+
+// TestAddAfterUncheckedRescans: an unchecked add can leave a cycle the
+// incremental check would miss, so the next Add has to fall back to a full
+// scan.
+func TestAddAfterUncheckedRescans(t *testing.T) {
+	g := New[Res]()
+	// Two unchecked adds close a cycle 1 -> 2 -> 1.
+	g.AddUnchecked(needProvide{needs: resIDs(RDB), provs: resIDs(RConfig)}) // 1
+	g.AddUnchecked(needProvide{needs: resIDs(RConfig), provs: resIDs(RDB)}) // 2
+	if ok, _ := IsAcyclic(g); ok {
+		t.Fatal("setup: the two unchecked adds should form a cycle")
+	}
+
+	// A node unrelated to the cycle. Without the rescan its own check would
+	// pass, because nothing depends on it.
+	_, _, err := g.Add(needProvide{provs: resIDs(RCache)})
+	if err == nil {
+		t.Fatal("Add after AddUnchecked must rescan and report the existing cycle")
+	}
+	ce, ok := errors.AsType[*CycleError[Res]](err)
+	if !ok {
+		t.Fatalf("expected *CycleError, got %T: %v", err, err)
+	}
+	// The cycle reported is the pre-existing one, not the node just rejected.
+	if len(ce.Cycle) < 3 {
+		t.Fatalf("cycle %v should span both unchecked nodes", ce.Cycle)
+	}
+	if g.Count() != 2 {
+		t.Fatalf("Count() = %d, want 2 (the rejected node must be rolled back)", g.Count())
+	}
+
+	// Still unverified: a second attempt behaves the same way.
+	if _, _, err = g.Add(needProvide{provs: resIDs(RCache)}); err == nil {
+		t.Fatal("a failed rescan must not clear the unverified flag")
+	}
+}
+
+// TestVerifyAcyclicClearsUnverified: VerifyAcyclic is the explicit way to pay
+// for the scan once instead of on the next Add.
+func TestVerifyAcyclicClearsUnverified(t *testing.T) {
+	g := New[Res]()
+	g.AddUnchecked(needProvide{provs: resIDs(RConfig)})
+	g.AddUnchecked(needProvide{needs: resIDs(RConfig), provs: resIDs(RDB)})
+
+	if err := g.VerifyAcyclic(); err != nil {
+		t.Fatalf("VerifyAcyclic: %v", err)
+	}
+
+	// Verified again. Adding a node that closes nothing is a normal success.
+	mustAdd(t, g, needProvide{needs: resIDs(RDB), provs: resIDs(RServer)})
+
+	// And a cycle is still caught by the incremental check.
+	if _, _, err := g.Add(needProvide{needs: resIDs(RServer), provs: resIDs(RConfig)}); err == nil {
+		t.Fatal("expected a cycle")
+	}
+}
+
+// TestVerifyAcyclicReportsCycle: an unchecked cycle surfaces through
+// VerifyAcyclic even though no Add ran.
+func TestVerifyAcyclicReportsCycle(t *testing.T) {
+	g := New[Res]()
+	g.AddUnchecked(needProvide{needs: resIDs(RDB), provs: resIDs(RConfig)})
+	g.AddUnchecked(needProvide{needs: resIDs(RConfig), provs: resIDs(RDB)})
+
+	err := g.VerifyAcyclic()
+	var ce *CycleError[Res]
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *CycleError, got %T: %v", err, err)
+	}
+	if len(ce.Nodes) != len(ce.Cycle) {
+		t.Fatalf("Cycle=%v Nodes=%d must be parallel", ce.Cycle, len(ce.Nodes))
+	}
+}
+
+// BenchmarkAddChain measures a graph built in dependency order, the shape dig
+// produces: each node depends on the previous one.
+//
+// Before the incremental check this was quadratic, because every Add ran a
+// whole-graph scan.
+func BenchmarkAddChain(b *testing.B) {
+	for _, size := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+			for range b.N {
+				g := New[Res]()
+				for j := range size {
+					typ := Res(fmt.Sprintf("k%d", j))
+					node := needProvide{provs: resIDs(typ)}
+					if j > 0 {
+						node.needs = resIDs(Res(fmt.Sprintf("k%d", j-1)))
+					}
+					if _, _, err := g.Add(node); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
 }
